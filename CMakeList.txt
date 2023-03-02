@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.25)
+project(tangram_ebpf LANGUAGES C)
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_C_COMPILER "/usr/bin/clang")
+set(CMAKE_C_FLAGS "-g -O2 -target bpf -emit-llvm")
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+
+find_package(LLVM REQUIRED CONFIG)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/elf)
+
+include_directories(${LLVM_INCLUDE_DIRS} src/include)
+separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${LLVM_DEFINITIONS_LIST})
+
+list(APPEND BPF_FILES "src/bpf/sched/process_exec.c")
+foreach(bpf_source IN LISTS BPF_FILES)
+    string(REGEX MATCH "[^/]+\.c$" bpf_name ${bpf_source})
+    string(LENGTH ${bpf_name} flen)
+    math(EXPR flen ${flen}-2)
+    string(SUBSTRING ${bpf_name} 0 ${flen} bpf_name)
+
+    # clang output is an object file.
+    add_library(${bpf_name}_o OBJECT ${bpf_source})
+
+    add_custom_target(${bpf_name}_skel ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/elf/${bpf_name}.skel.h)
+    add_custom_command(OUTPUT elf/${bpf_name}.skel.h
+        COMMAND  /usr/bin/llc -march=bpf -mcpu=probe -filetype=obj -o elf/${bpf_name}.elf $<TARGET_OBJECTS:${bpf_name}_o>
+        COMMAND  /usr/sbin/bpftool gen skeleton ${CMAKE_CURRENT_BINARY_DIR}/elf/${bpf_name}.elf > ${CMAKE_CURRENT_BINARY_DIR}/elf/${bpf_name}.skel.h)
+endforeach()
